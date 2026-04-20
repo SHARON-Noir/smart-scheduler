@@ -1,0 +1,1 @@
+# Phase 4 - SQLite database logic will be added here
