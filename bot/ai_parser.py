@@ -1,31 +1,33 @@
 import ollama
 import json
 import os
+import re
 from dotenv import load_dotenv
-from datetime import date
+from datetime import date, timedelta
 
 load_dotenv()
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 def parse_event(text: str) -> dict:
-    today = date.today().strftime("%Y-%m-%d")
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
 
-    prompt = f"""Extract event details from this text and reply in JSON only.
-No explanation, no extra text, no markdown, just raw JSON.
+    prompt = f"""You are an event extraction assistant. Extract event details from the text below.
 
-Today's date is {today}. Use this if user says 'today' or 'tomorrow'.
+RULES:
+- Always return valid JSON only
+- No markdown, no code blocks, no explanation
+- Title must ALWAYS be filled — use the main topic of the message
+- If no date found, use today: {today.strftime("%Y-%m-%d")}
+- If no time found, use null
+- For "today" use {today.strftime("%Y-%m-%d")}
+- For "tomorrow" use {tomorrow.strftime("%Y-%m-%d")}
 
-Text: {text}
+TEXT: {text}
 
-Reply in this exact format:
-{{
-  "title": "event name here",
-  "date": "YYYY-MM-DD",
-  "time": "HH:MM"
-}}
-
-If you cannot find a date use null. If you cannot find a time use null."""
+Return ONLY this JSON:
+{{"title": "event title here", "date": "YYYY-MM-DD", "time": "HH:MM or null"}}"""
 
     try:
         client = ollama.Client(host=OLLAMA_HOST)
@@ -35,18 +37,40 @@ If you cannot find a date use null. If you cannot find a time use null."""
         )
 
         raw = response['message']['content'].strip()
+        print(f"Raw AI response: {raw}")
 
+        # strip markdown code blocks if present
         if "```" in raw:
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
         raw = raw.strip()
 
-        return json.loads(raw)
+        # find JSON object using regex as fallback
+        match = re.search(r'\{.*?\}', raw, re.DOTALL)
+        if match:
+            raw = match.group()
+
+        result = json.loads(raw)
+
+        # fix null string
+        if result.get("time") == "null":
+            result["time"] = None
+
+        # if title still empty use original text as fallback
+        if not result.get("title"):
+            result["title"] = text[:50]
+
+        return result
 
     except json.JSONDecodeError:
         print(f"JSON parse failed. Raw output: {raw}")
-        return None
+        # last resort fallback
+        return {
+            "title": text[:50],
+            "date": today.strftime("%Y-%m-%d"),
+            "time": None
+        }
     except Exception as e:
         print(f"Ollama error: {e}")
         return None
