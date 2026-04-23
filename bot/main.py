@@ -1,7 +1,11 @@
 import os
 from dotenv import load_dotenv
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
-from bot.handlers import start, handle_text, handle_voice, list_events, list_events_delete, delete_event_handler
+from bot.handlers import (
+    start, handle_text, handle_voice,
+    list_events_delete, delete_event_handler,
+    today_events, week_events
+)
 from db.database import init_db
 from bot.scheduler import scheduler, check_reminders
 
@@ -37,6 +41,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("events", list_events_delete))
     app.add_handler(CommandHandler("delete", delete_event_handler))
+    app.add_handler(CommandHandler("today", today_events))
+    app.add_handler(CommandHandler("week", week_events))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 

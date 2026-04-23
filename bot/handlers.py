@@ -1,26 +1,28 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 from bot.ai_parser import parse_event
-from db.database import save_event, get_all_events
 from db.database import save_event, get_all_events, delete_event
+from datetime import date, datetime, timedelta
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Hey! I'm your Smart Scheduler\n\n"
         "Send me an event like:\n"
-        "- 'Team meeting on 5 April at 4pm'\n"
+        "- 'Team meeting on 5 May at 4pm'\n"
         "- 'Tomorrow 3pm project review'\n"
         "- Or send a voice message!\n\n"
         "Commands:\n"
-        "/events - see all your saved events\n"
-        "/start - show this message"
+        "/events — see all saved events\n"
+        "/today — events happening today\n"
+        "/week — events this week\n"
+        "/delete <ID> — delete an event\n"
+        "/start — show this message"
     )
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     chat_id = update.message.chat_id
 
-    # handle yes/no confirmation
     if user_text.lower() in ["yes", "y"]:
         pending = context.user_data.get("pending_event")
         if pending:
@@ -30,24 +32,42 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 date=pending["date"],
                 time=pending["time"]
             )
+
+            # create google calendar event
+            try:
+                from bot.calendar_integration import create_calendar_event
+                create_calendar_event(
+                    pending["title"],
+                    pending["date"],
+                    pending["time"]
+                )
+                calendar_msg = "Added to Google Calendar!"
+            except Exception as e:
+                print(f"Calendar error: {e}")
+                calendar_msg = "Could not add to Google Calendar."
+
             context.user_data["pending_event"] = None
             await update.message.reply_text(
                 f"Saved!\n\n"
                 f"Title: {pending['title']}\n"
                 f"Date: {pending['date']}\n"
                 f"Time: {pending['time']}\n\n"
-                f"I'll remind you 1 day before and 1 hour before."
+                f"{calendar_msg}\n"
+                f"Email + Telegram reminders set for 1 day before and 1 hour before."
             )
         else:
-            await update.message.reply_text("No event to save. Send me an event first.")
+            await update.message.reply_text(
+                "No pending event. Send me an event first."
+            )
         return
 
     if user_text.lower() in ["no", "n"]:
         context.user_data["pending_event"] = None
-        await update.message.reply_text("Okay, event discarded. Send me a new one anytime.")
+        await update.message.reply_text(
+            "Okay, discarded. Send me a new event anytime."
+        )
         return
 
-    # parse new event
     await update.message.reply_text("Parsing your event...")
     result = parse_event(user_text)
 
@@ -63,7 +83,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         reply = (
             "Sorry, I could not understand that.\n"
-            "Try something like: 'Team meeting on 5 April at 4pm'"
+            "Try: 'Team meeting on 5 May at 4pm'"
         )
 
     await update.message.reply_text(reply)
@@ -85,7 +105,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.unlink(tmp.name)
 
         if text:
-            await update.message.reply_text(f"I heard: {text}\n\nParsing event...")
+            await update.message.reply_text(
+                f"I heard: {text}\n\nParsing event..."
+            )
             result = parse_event(text)
 
             if result:
@@ -98,37 +120,30 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"Should I save this? Reply yes or no."
                 )
             else:
-                reply = "I heard you but couldn't extract event details. Try again."
-
+                reply = (
+                    "I heard you but couldn't extract event details.\n"
+                    "Try saying: 'Team meeting on 5 May at 4pm'"
+                )
             await update.message.reply_text(reply)
         else:
-            await update.message.reply_text("Sorry, couldn't transcribe that. Please try again.")
+            await update.message.reply_text(
+                "Sorry, couldn't transcribe that. Please try again."
+            )
 
     except Exception as e:
         print(f"Voice handler error: {e}")
-        await update.message.reply_text("Something went wrong processing your voice message.")
-
-async def list_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.message.chat_id
-    events = get_all_events(chat_id)
-
-    if not events:
-        await update.message.reply_text("No events saved yet. Send me an event to get started!")
-        return
-
-    reply = "Your upcoming events:\n\n"
-    for event in events:
-        event_id, title, date, time = event
-        reply += f"• {title}\n  Date: {date} | Time: {time}\n\n"
-
-    await update.message.reply_text(reply)
+        await update.message.reply_text(
+            "Something went wrong processing your voice message."
+        )
 
 async def list_events_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     events = get_all_events(chat_id)
 
     if not events:
-        await update.message.reply_text("No events saved yet.")
+        await update.message.reply_text(
+            "No events saved yet.\nSend me an event to get started!"
+        )
         return
 
     reply = "Your saved events:\n\n"
@@ -136,7 +151,7 @@ async def list_events_delete(update: Update, context: ContextTypes.DEFAULT_TYPE)
         event_id, title, date, time = event
         reply += f"ID {event_id} — {title}\n  Date: {date} | Time: {time}\n\n"
 
-    reply += "To delete an event, send:\n/delete <ID>\n\nExample: /delete 1"
+    reply += "To delete: /delete <ID>\nExample: /delete 1"
     await update.message.reply_text(reply)
 
 async def delete_event_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -153,15 +168,64 @@ async def delete_event_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         event_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("Invalid ID. Example: /delete 1")
+        await update.message.reply_text(
+            "Invalid ID. Example: /delete 1"
+        )
         return
 
     success = delete_event(event_id, chat_id)
 
     if success:
-        await update.message.reply_text(f"Event {event_id} deleted successfully.")
+        await update.message.reply_text(
+            f"Event {event_id} deleted successfully."
+        )
     else:
         await update.message.reply_text(
             f"Could not find event {event_id}.\n"
             f"Use /events to see your saved events."
         )
+
+async def today_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    events = get_all_events(chat_id)
+    today = date.today().strftime("%Y-%m-%d")
+
+    todays = [e for e in events if e[2] == today]
+
+    if not todays:
+        await update.message.reply_text(
+            "No events today. Enjoy your free day!"
+        )
+        return
+
+    reply = "Today's events:\n\n"
+    for event in todays:
+        event_id, title, event_date, time = event
+        reply += f"• {title} at {time}\n"
+
+    await update.message.reply_text(reply)
+
+async def week_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    events = get_all_events(chat_id)
+
+    today = date.today()
+    week_later = today + timedelta(days=7)
+
+    this_week = [
+        e for e in events
+        if e[2] and today.strftime("%Y-%m-%d") <= e[2] <= week_later.strftime("%Y-%m-%d")
+    ]
+
+    if not this_week:
+        await update.message.reply_text(
+            "No events this week. You're all clear!"
+        )
+        return
+
+    reply = "Events this week:\n\n"
+    for event in this_week:
+        event_id, title, event_date, time = event
+        reply += f"• {title}\n  Date: {event_date} | Time: {time}\n\n"
+
+    await update.message.reply_text(reply)
