@@ -33,6 +33,31 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 time=pending["time"]
             )
 
+            # immediate check — if event is within 2 hours, warn now
+            from datetime import datetime
+            if pending.get("date") and pending.get("time"):
+                try:
+                    event_dt = datetime.strptime(
+                        f"{pending['date']} {pending['time']}",
+                        "%Y-%m-%d %H:%M"
+                    )
+                    time_left = event_dt - datetime.now()
+                    minutes_left = time_left.total_seconds() / 60
+
+                    if 0 < minutes_left <= 60:
+                        await update.message.reply_text(
+                            f"Heads up — this event is in "
+                            f"{int(minutes_left)} minutes!"
+                        )
+                    elif 60 < minutes_left <= 120:
+                        await update.message.reply_text(
+                            f"Note — this event is in about "
+                            f"{int(minutes_left/60)} hour. "
+                            f"You'll get a reminder soon."
+                        )
+                except:
+                    pass
+
             # create google calendar event
             try:
                 from bot.calendar_integration import create_calendar_event

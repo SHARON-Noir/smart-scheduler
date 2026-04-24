@@ -5,6 +5,24 @@ import re
 from dotenv import load_dotenv
 from datetime import date, timedelta
 
+def clean_time(time_str: str) -> str:
+    if time_str is None:
+        return None
+    time_str = time_str.strip().lower()
+    # convert 12:30pm → 12:30, 2:00am → 02:00
+    if "am" in time_str or "pm" in time_str:
+        try:
+            from datetime import datetime
+            t = datetime.strptime(time_str, "%I:%M%p")
+            return t.strftime("%H:%M")
+        except:
+            try:
+                t = datetime.strptime(time_str, "%I%p")
+                return t.strftime("%H:%M")
+            except:
+                return time_str
+    return time_str
+
 load_dotenv()
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -52,6 +70,9 @@ Return ONLY this JSON:
             raw = match.group()
 
         result = json.loads(raw)
+        if result.get("time"):
+            result["time"] = clean_time(result["time"])
+        return result
 
         # fix null string
         if result.get("time") == "null":
@@ -74,3 +95,4 @@ Return ONLY this JSON:
     except Exception as e:
         print(f"Ollama error: {e}")
         return None
+    
